@@ -1,12 +1,12 @@
 [package]
-description = "Created with Anchor"
+description = "Created with Anchor, Idea from anchor-escrow"
 edition = "2018"
-name = "anchor-escrow"
-version = "0.1.0"
+name = "survey_rewards"
+version = "0.3.0"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "anchor_escrow"
+name = "survey_rewards"
 
 [features]
 cpi = ["no-entrypoint"]
