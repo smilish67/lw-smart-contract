@@ -14,16 +14,17 @@ pub mod survey_rewards {
         initializer_amount: u64,
         taker_amount: u64,
     ) -> Result<()> {
-        ctx.accounts.escrow_account.initializer_key = *ctx.accounts.initializer.key;
+        ctx.accounts.escrow_account.publisher_account = *ctx.accounts.initializer.key;
         ctx.accounts
             .escrow_account
-            .initializer_deposit_token_account = *ctx
+            .publisher_token_account = *ctx
             .accounts
             .initializer_deposit_token_account
             .to_account_info()
             .key;
-        ctx.accounts.escrow_account.initializer_amount = initializer_amount;
-        ctx.accounts.escrow_account.taker_amount = taker_amount;
+        ctx.accounts.escrow_account.guarantee = initializer_amount;
+        ctx.accounts.escrow_account.reward = taker_amount;
+        ctx.accounts.escrow_account.current_balance = initializer_amount;
 
         let escrow_pda_seed : &[u8] = ctx.accounts.escrow_account.to_account_info().key.as_ref();
 
@@ -37,7 +38,7 @@ pub mod survey_rewards {
 
         token::transfer(
             ctx.accounts.into_transfer_to_pda_context(),
-            ctx.accounts.escrow_account.initializer_amount,
+            ctx.accounts.escrow_account.guarantee,
         )?;
 
         Ok(())
@@ -54,7 +55,7 @@ pub mod survey_rewards {
             ctx.accounts
                 .into_transfer_to_initializer_context()
                 .with_signer(&[&authority_seeds[..]]),
-            ctx.accounts.escrow_account.initializer_amount,
+            ctx.accounts.escrow_account.current_balance,
         )?;
 
         token::close_account(
@@ -76,21 +77,24 @@ pub mod survey_rewards {
             ctx.accounts
                 .into_transfer_to_taker_context()
                 .with_signer(&[&authority_seeds[..]]),
-            ctx.accounts.escrow_account.taker_amount,
+            ctx.accounts.escrow_account.reward,
         )?;
 
-        // token::close_account(
-        //     ctx.accounts
-        //         .into_close_context()
-        //         .with_signer(&[&authority_seeds[..]]),
-        // )?;
+        ctx.accounts.escrow_account.current_balance -= ctx.accounts.escrow_account.reward;
+        if ctx.accounts.escrow_account.current_balance == 0 {
+            token::close_account(
+                ctx.accounts
+                    .into_close_context()
+                    .with_signer(&[&authority_seeds[..]]),
+            )?;
+        }
 
         Ok(())
     }
 }
 
 #[derive(Accounts)]
-#[instruction(vault_account_bump: u8, initializer_amount: u64)]
+#[instruction(vault_account_bump: u8, guarantee: u64)]
 pub struct Initialize<'info> {
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut, signer)]
@@ -107,7 +111,7 @@ pub struct Initialize<'info> {
     pub vault_account: Account<'info, TokenAccount>,
     #[account(
         mut,
-        constraint = initializer_deposit_token_account.amount >= initializer_amount
+        constraint = initializer_deposit_token_account.amount >= guarantee
     )]
     pub initializer_deposit_token_account: Account<'info, TokenAccount>,
     #[account(zero)]
@@ -132,8 +136,8 @@ pub struct Cancel<'info> {
     pub initializer_deposit_token_account: Account<'info, TokenAccount>,
     #[account(
         mut,
-        constraint = escrow_account.initializer_key == *initializer.key,
-        constraint = escrow_account.initializer_deposit_token_account == *initializer_deposit_token_account.to_account_info().key,
+        constraint = escrow_account.publisher_account == *initializer.key,
+        constraint = escrow_account.publisher_token_account == *initializer_deposit_token_account.to_account_info().key,
         close = initializer
     )]
     pub escrow_account: Box<Account<'info, EscrowAccount>>,
@@ -147,22 +151,15 @@ pub struct Exchange<'info> {
     /// CHECK: This is not dangerous because we don't read or write from this account
     pub taker: AccountInfo<'info>,
     #[account(mut)]
-    pub taker_deposit_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(mut)]
     pub taker_receive_token_account: Box<Account<'info, TokenAccount>>,
     #[account(mut)]
     pub initializer_deposit_token_account: Box<Account<'info, TokenAccount>>,
-    #[account(mut)]
-    pub initializer_receive_token_account: Box<Account<'info, TokenAccount>>,
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut)]
     pub initializer: AccountInfo<'info>,
     #[account(
         mut,
-        constraint = escrow_account.taker_amount <= taker_deposit_token_account.amount,
-        constraint = escrow_account.initializer_deposit_token_account == *initializer_deposit_token_account.to_account_info().key,
-        constraint = escrow_account.initializer_key == *initializer.key,
-        close = initializer
+        constraint = escrow_account.publisher_account == *initializer.key,
     )]
     pub escrow_account: Box<Account<'info, EscrowAccount>>,
     #[account(mut)]
@@ -175,10 +172,11 @@ pub struct Exchange<'info> {
 
 #[account]
 pub struct EscrowAccount {
-    pub initializer_key: Pubkey,
-    pub initializer_deposit_token_account: Pubkey,
-    pub initializer_amount: u64,
-    pub taker_amount: u64,
+    pub publisher_account: Pubkey,
+    pub publisher_token_account: Pubkey,
+    pub guarantee: u64,
+    pub current_balance: u64,
+    pub reward: u64,
 }
 
 impl<'info> Initialize<'info> {
